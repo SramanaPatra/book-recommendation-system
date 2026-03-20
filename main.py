@@ -1,120 +1,102 @@
-# ---------------------------------------------
+# ----------------------------------------------------------
 # Personalized Book Recommendation System
-# User-Based Collaborative Filtering using KNN
-# ---------------------------------------------
+# Book-Based Collaborative Filtering (Cosine Similarity)
+# ----------------------------------------------------------
 
-# Step 1: Import libraries
+import os
 import pandas as pd
-from surprise import Dataset, Reader, KNNBasic
-from surprise.model_selection import cross_validate
+from sklearn.metrics.pairwise import cosine_similarity
 
-print("Starting Book Recommendation System...\n")
+print("Current path:", os.getcwd())
+print("\nStarting Book Recommendation System (Book-Based)...\n")
 
-# ---------------------------------------------
-# Step 2: Load Dataset
-# ---------------------------------------------
+# ----------------------------------------------------------
+# Step 1: Load Datasets
+# ----------------------------------------------------------
 
 print("Loading datasets...")
 
-books = pd.read_csv("data/books.csv")
-ratings = pd.read_csv("data/ratings.csv")
-
-# If system is slow, use this instead:
-# ratings = pd.read_csv("data/ratings.csv", nrows=500000)
+books = pd.read_csv("data/books copy.csv")
+ratings = pd.read_csv("data/ratings copy.csv", nrows=200000)
 
 print("Books loaded:", books.shape)
 print("Ratings loaded:", ratings.shape)
 
-# Keep only required columns
 ratings = ratings[['user_id', 'book_id', 'rating']]
 
-# Remove missing values if any
-ratings.dropna(inplace=True)
+# ----------------------------------------------------------
+# Step 2: Data Filtering (same as before)
+# ----------------------------------------------------------
 
-# ---------------------------------------------
-# Step 3: Prepare data for Surprise library
-# ---------------------------------------------
+print("\nFiltering active users and popular books...")
 
-print("\nPreparing data for model...")
+user_counts = ratings['user_id'].value_counts()
+active_users = user_counts[user_counts >= 20].index
+ratings = ratings[ratings['user_id'].isin(active_users)]
 
-reader = Reader(rating_scale=(1, 5))
+book_counts = ratings['book_id'].value_counts()
+popular_books = book_counts[book_counts >= 10].index
+ratings = ratings[ratings['book_id'].isin(popular_books)]
 
-data = Dataset.load_from_df(
-    ratings[['user_id', 'book_id', 'rating']],
-    reader
-)
+print("Filtered ratings:", ratings.shape)
 
-trainset = data.build_full_trainset()
+# ----------------------------------------------------------
+# Step 3: Merge Data
+# ----------------------------------------------------------
 
-# ---------------------------------------------
-# Step 4: Build KNN Model
-# ---------------------------------------------
+print("\nMerging datasets...")
 
-print("Training KNN model...")
+data = pd.merge(ratings, books, left_on="book_id", right_on="book_id")
 
-sim_options = {
-    'name': 'cosine',      # similarity measure
-    'user_based': True     # user-user similarity
-}
+# ----------------------------------------------------------
+# Step 4: Create Pivot Table (Book vs User)
+# ----------------------------------------------------------
 
-model = KNNBasic(sim_options=sim_options)
-model.fit(trainset)
+print("Creating pivot table...")
 
-# ---------------------------------------------
-# Step 5: Evaluate Model
-# ---------------------------------------------
+pivot = data.pivot_table(index="title", columns="user_id", values="rating").fillna(0)
 
-print("\nEvaluating model (RMSE)...")
-cross_validate(model, data, measures=['RMSE'], cv=3, verbose=True)
+print("Pivot table shape:", pivot.shape)
 
-# ---------------------------------------------
-# Step 6: Recommendation Function
-# ---------------------------------------------
+# ----------------------------------------------------------
+# Step 5: Compute Similarity Matrix
+# ----------------------------------------------------------
 
-def recommend_books(user_id, n=5):
-    print(f"\nGenerating recommendations for User {user_id}...")
+print("Computing similarity matrix...")
 
-    # Books already rated by this user
-    rated_books = ratings[ratings['user_id'] == user_id]['book_id'].tolist()
+similarity = cosine_similarity(pivot)
+similarity_df = pd.DataFrame(similarity, index=pivot.index, columns=pivot.index)
 
-    # All book ids
-    all_books = books['book_id'].unique()
+print("Model ready!")
 
-    predictions = []
+# ----------------------------------------------------------
+# Step 6: Recommendation Function (Book-Based)
+# ----------------------------------------------------------
 
-    # Predict ratings for books not rated yet
-    for book_id in all_books:
-        if book_id not in rated_books:
-            pred = model.predict(user_id, book_id)
-            predictions.append((book_id, pred.est))
+def recommend_books(book_name, n=5):
 
-    # Sort by predicted rating (highest first)
-    predictions.sort(key=lambda x: x[1], reverse=True)
+    if book_name not in similarity_df.index:
+        print("\nBook not found!")
+        print("Try one of these:\n")
+        print(list(similarity_df.index[:10]))
+        return
 
-    # Top N recommendations
-    top_books = predictions[:n]
+    print(f"\nRecommendations for: {book_name}\n")
 
-    print("\nTop Recommended Books:\n")
+    similar_scores = similarity_df[book_name].sort_values(ascending=False)[1:n+1]
 
-    for book_id, rating in top_books:
-        title = books[books['book_id'] == book_id]['title'].values[0]
-        print(f"{title}  | Predicted Rating: {round(rating, 2)}")
+    for i, (book, score) in enumerate(similar_scores.items(), start=1):
+        print(f"{i}. {book} (Similarity: {round(score, 2)})")
 
-# ---------------------------------------------
-# Step 7: User Input Loop
-# ---------------------------------------------
+# ----------------------------------------------------------
+# Step 7: Input Loop (Book Name instead of User ID)
+# ----------------------------------------------------------
 
 while True:
-    try:
-        user_input = int(input("\nEnter User ID (1–50000) or 0 to exit: "))
+    book_input = input("\nEnter Book Name (or type 'exit'): ")
 
-        if user_input == 0:
-            print("Exiting program...")
-            break
+    if book_input.lower() == 'exit':
+        print("Exiting program...")
+        break
 
-        recommend_books(user_input, 5)
-
-    except:
-        print("Invalid input. Please enter a valid number.")
-from surprise import Dataset, Reader, KNNBasic
-print("Surprise installed successfully")
+    recommend_books(book_input, 5)

@@ -1,10 +1,9 @@
 import streamlit as st
 import pandas as pd
-from surprise import Dataset, Reader, KNNBasic
+from sklearn.metrics.pairwise import cosine_similarity
 
-st.title("📚 Personalized Book Recommendation System")
-
-st.write("This system recommends books based on user preferences using Collaborative Filtering.")
+st.title("📚 Book Recommendation System")
+st.write("Get recommendations based on your favorite book!")
 
 # -------------------------------
 # Load Data
@@ -30,53 +29,50 @@ def load_data():
 
 books, ratings = load_data()
 
-valid_users = ratings['user_id'].unique()
+# -------------------------------
+# Prepare Data (Pivot Table)
+# -------------------------------
+@st.cache_data
+def create_pivot(books, ratings):
+    data = pd.merge(ratings, books, left_on="book_id", right_on="book_id")
+    pivot = data.pivot_table(index="title", columns="user_id", values="rating").fillna(0)
+    return pivot
+
+pivot = create_pivot(books, ratings)
 
 # -------------------------------
-# Train Model (Cached)
+# Compute Similarity
 # -------------------------------
-@st.cache_resource
-def train_model(ratings):
-    reader = Reader(rating_scale=(1, 5))
-    data = Dataset.load_from_df(ratings[['user_id', 'book_id', 'rating']], reader)
-    trainset = data.build_full_trainset()
+@st.cache_data
+def compute_similarity(pivot):
+    similarity = cosine_similarity(pivot)
+    return pd.DataFrame(similarity, index=pivot.index, columns=pivot.index)
 
-    model = KNNBasic(sim_options={'name': 'cosine', 'user_based': True})
-    model.fit(trainset)
-    return model
+similarity_df = compute_similarity(pivot)
 
-model = train_model(ratings)
-
-st.success(f"Model loaded successfully. Active users: {len(valid_users)}")
+st.success("Model loaded successfully!")
 
 # -------------------------------
-# User Input
+# Book Selection (Dropdown)
 # -------------------------------
-user_id = st.number_input("Enter User ID", min_value=1, step=1)
+book_list = sorted(pivot.index.tolist())
+selected_book = st.selectbox("Select your favorite book:", book_list)
 
+# -------------------------------
+# Recommendation Function
+# -------------------------------
+def recommend_books(book_name, n=5):
+    similar_scores = similarity_df[book_name].sort_values(ascending=False)[1:n+1]
+    return similar_scores
+
+# -------------------------------
+# Button
+# -------------------------------
 if st.button("Get Recommendations"):
 
-    if user_id not in valid_users:
-        st.error("User not found in active dataset.")
-        st.write("Try one of these IDs:", valid_users[:10])
-    else:
-        st.write("Generating recommendations...")
+    st.write(f"### Recommendations for: {selected_book}")
 
-        rated_books = ratings[ratings['user_id'] == user_id]['book_id'].tolist()
-        all_books = books['book_id'].unique()
+    recommendations = recommend_books(selected_book)
 
-        predictions = []
-
-        for book_id in all_books:
-            if book_id not in rated_books:
-                pred = model.predict(user_id, book_id)
-                predictions.append((book_id, pred.est))
-
-        predictions.sort(key=lambda x: x[1], reverse=True)
-        top_books = predictions[:5]
-
-        st.subheader("Top Recommended Books")
-
-        for book_id, rating in top_books:
-            title = books[books['book_id'] == book_id]['title'].values[0]
-            st.write(f"**{title}**  (Predicted Rating: {round(rating,2)})")
+    for i, (book, score) in enumerate(recommendations.items(), start=1):
+        st.write(f"**{i}. {book}**  (Similarity: {round(score,2)})")
